@@ -24,28 +24,36 @@ int main(int argc, char **argv)
   avdevice_register_all();
   av_log_set_level(AV_LOG_WARNING);
 
+  // Find the h264 decoder
+  AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
+  if (!codec) {
+    std::cerr << "Could not find the h264 codec" << std::endl;
+    exit(1);
+  }
+
+  // Allocate a codec context
+  // Free: avcodec_free_context()
+  AVCodecContext *codec_context = avcodec_alloc_context3(codec);
+  if (!codec_context) {
+    std::cerr << "Could not allocate a codec context" << std::endl;
+    exit(1);
+  }
 
   // Device drivers appear as formats in ffmpeg
   // Find the v4l driver
   AVInputFormat *input_format = av_find_input_format("video4linux2");
   if (!input_format) {
-    std::cerr << "Cannot find the v4l driver" << std::endl;
+    std::cerr << "Could not find the v4l driver" << std::endl;
     exit(1);
   }
 
   // Allocate a format context
-  // Call format_free_context() to free
+  // Free: format_free_context()
   AVFormatContext *format_context = avformat_alloc_context();
   if (!format_context) {
-    std::cerr << "Cannot allocate a format context" << std::endl;
+    std::cerr << "Could not allocate a format context" << std::endl;
     exit(1);
   }
-
-  // Don't block
-#pragma clang diagnostic push
-#pragma ide diagnostic ignored "hicpp-signed-bitwise"
-  format_context->flags |= AVFMT_FLAG_NONBLOCK;
-#pragma clang diagnostic pop
 
   // Set format options, this will allocate an AVDictionary
   AVDictionary *format_options = nullptr;
@@ -54,18 +62,14 @@ int main(int argc, char **argv)
   av_dict_set(&format_options, "video_size", size.c_str(), 0);
 
   // Open input, pass ownership of format_options
-  // Call avformat_close_input() to close
   if (avformat_open_input(&format_context, input_fn.c_str(), input_format, &format_options) < 0) {
-    std::cerr << "Cannot open device " << input_fn << std::endl;
-    avformat_free_context(format_context);
+    std::cerr << "Could not open the v4l device " << input_fn << std::endl;
     exit(1);
   }
 
   // Get stream info from the input
   if (avformat_find_stream_info(format_context, nullptr) < 0) {
-    std::cerr << "Cannot find stream info" << std::endl;
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+    std::cerr << "Could not find the device stream info" << std::endl;
     exit(1);
   }
 
@@ -75,105 +79,75 @@ int main(int argc, char **argv)
   // Find the video stream (vs audio, metadata, etc.)
   int stream_idx = av_find_best_stream(format_context, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
   if (stream_idx < 0) {
-    std::cerr << "Cannot find video stream" << std::endl;
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+    std::cerr << "Could not find a video stream on the device" << std::endl;
     exit(1);
   }
 
   AVStream *stream = format_context->streams[stream_idx];
 
-  // TODO deprecated, switch to AVCodecParameters *codecpar
-  // TODO this means we don't have a context, so need to call avcodec_alloc_context3()
-  AVCodecContext *codec_context = stream->codec;
+  // Get the codec parameters
+  // We'll look at width, height, [pixel] format
+  AVCodecParameters *codec_params = stream->codecpar;
 
-  // Find the appropriate decoder
-  // TODO always get the H264 decoder -- move this up and change the cleanup order
-  AVCodec *decoder = avcodec_find_decoder(codec_context->codec_id);
-  if (!decoder) {
-    std::cerr << "Cannot find codec" << std::endl;
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
-    exit(1);
-  }
-
-  std::cout << "To play the video:" << std::endl
-            << "ffplay -f rawvideo -pixel_format " << av_get_pix_fmt_name(codec_context->pix_fmt)
-            << " -video_size " << codec_context->width << "x" << codec_context->height << " " << output_fn << std::endl;
-
-  // Set decoder options, this will allocate an AVDictionary
-  // TODO is refcounted_frames required? seems to change who owns what
-  AVDictionary *decoder_options = nullptr;
-  av_dict_set(&decoder_options, "refcounted_frames", "1", 0);
+  std::cout << "To play the video:" << std::endl << "ffplay -f rawvideo -pixel_format "
+            << av_get_pix_fmt_name(static_cast<AVPixelFormat>(codec_params->format))
+            << " -video_size " << codec_params->width << "x" << codec_params->height << " " << output_fn << std::endl;
 
   // Open the decoder, pass ownership of decoder_options
-  if (avcodec_open2(codec_context, decoder, &decoder_options) < 0) {
-    std::cerr << "Cannot open codec" << std::endl;
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+  if (avcodec_open2(codec_context, codec, nullptr) < 0) {
+    std::cerr << "Could not open codec" << std::endl;
     exit(1);
   }
 
   // Allocate image
-  // Call av_freep() to free
+  // Free: av_freep()
   uint8_t *image_pointers[4] = {nullptr};
   int image_linesizes[4];
   int image_size = av_image_alloc(image_pointers, image_linesizes,
-                                  codec_context->width, codec_context->height,
-                                  codec_context->pix_fmt, 1);
+                                  codec_params->width, codec_params->height,
+                                  static_cast<AVPixelFormat>(codec_params->format), 1);
   if (image_size < 0) {
-    std::cerr << "Cannot allocate image" << std::endl;
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+    std::cerr << "Could not allocate image" << std::endl;
     exit(1);
   }
 
   // Allocate frame and set to default values
-  // Call av_frame_free() to free
+  // Free: av_frame_free()
   AVFrame *frame = av_frame_alloc();
   if (!frame) {
-    std::cerr << "Cannot allocate frame" << std::endl;
-    av_freep(image_pointers);
-    avcodec_close(codec_context);
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+    std::cerr << "Could not allocate frame" << std::endl;
     exit(1);
   }
 
   // Open destination file for writing
   FILE *output_file = fopen(output_fn.c_str(), "wb");
   if (!output_file) {
-    std::cerr << "Cannot open output file" << std::endl;
-    av_frame_free(&frame);
-    av_freep(image_pointers);
-    avcodec_close(codec_context);
-    avformat_close_input(&format_context);
-    avformat_free_context(format_context);
+    std::cerr << "Could not open output file" << std::endl;
     exit(1);
   }
 
-  // Process frames
+  // Process frames from the v4l device
   // int num_frames = 0;
   while (true) {
     AVPacket packet;
 
-    // Read one frame
-    // Call av_packet_unref() to free packet
-    int rc = av_read_frame(format_context, &packet);
-    if (rc < 0) {
-      if (rc == AVERROR(EAGAIN)) {
-        // TODO TODO TODO this spins until a frame is ready! Need a blocking routine, or a callback mechanism
-        continue;
-      } else {
-        break;
-      }
+    // Read one frame from v4l
+    // Free: av_packet_unref
+    if (av_read_frame(format_context, &packet) < 0) {
+      std::cout << "EOF" << std::endl;
+      break;
     }
 
-    // Decode frame
-    // TODO deprecated, use avcodec_send_packet() and avcodec_receive_frame()
-    int got_frame;
-    if (avcodec_decode_video2(codec_context, frame, &got_frame, &packet) < 0 || !got_frame) {
-      std::cerr << "Cannot decode frame" << std::endl;
+    // Send packet to decoder
+    if (avcodec_send_packet(codec_context, &packet) < 0) {
+      std::cerr << "Could not send packet" << std::endl;
+      av_packet_unref(&packet);
+      continue;
+    }
+
+    // Get decoded frame
+    if (avcodec_receive_frame(codec_context, frame) < 0) {
+      std::cerr << "Could not receive frame" << std::endl;
       av_packet_unref(&packet);
       continue;
     }
@@ -192,12 +166,7 @@ int main(int argc, char **argv)
     av_packet_unref(&packet);
   }
 
-  // Will never get here....
-  av_frame_free(&frame);
-  av_freep(image_pointers);
-  avcodec_close(codec_context);
-  avformat_close_input(&format_context);
-  avformat_free_context(format_context);
+  fclose(output_file);
   exit(0);
 }
 

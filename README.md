@@ -1,11 +1,12 @@
 # v4l_h264_ffmpeg
 
-Read h264 from video4linux and use ffmpeg libraries to decode the packets and display the video stream.
+Read h264 from video4linux, decode it, and write it to a file.
 
-Usage: TODO
+Example usage: `./v4l_to_file /dev/video2 30 640x480 output`
 
 Tested on Ubuntu 18.04.
 
+Requires ffmpeg:
 ~~~
 ffmpeg version 3.4.6-0ubuntu0.18.04.1 Copyright (c) 2000-2019 the FFmpeg developers
   libavutil      55. 78.100 / 55. 78.100

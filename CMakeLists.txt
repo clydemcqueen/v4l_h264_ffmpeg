@@ -5,5 +5,5 @@ set(CMAKE_CXX_STANDARD 14)
 
 include_directories(include)
 
-add_executable(main src/main.cpp)
-target_link_libraries(main avcodec avdevice avformat avutil)
+add_executable(v4l_to_file src/main.cpp)
+target_link_libraries(v4l_to_file avcodec avdevice avformat avutil)
