@@ -5,6 +5,8 @@ extern "C" {
 #include <libavdevice/avdevice.h>
 }
 
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "hicpp-signed-bitwise"
 int main(int argc, char **argv)
 {
   if (argc != 5) {
@@ -48,7 +50,7 @@ int main(int argc, char **argv)
   }
 
   // Allocate a format context
-  // Free: format_free_context()
+  // Free: avformat_free_context()
   AVFormatContext *format_context = avformat_alloc_context();
   if (!format_context) {
     std::cerr << "Could not allocate a format context" << std::endl;
@@ -127,7 +129,7 @@ int main(int argc, char **argv)
   }
 
   // Process frames from the v4l device
-  // int num_frames = 0;
+  int num_frames = 0;
   while (true) {
     AVPacket packet;
 
@@ -136,6 +138,24 @@ int main(int argc, char **argv)
     if (av_read_frame(format_context, &packet) < 0) {
       std::cout << "EOF" << std::endl;
       break;
+    }
+
+    if (packet.flags) {
+      std::cout << "flags on frame " << num_frames << ": ";
+      if (packet.flags & AV_PKT_FLAG_KEY) {
+        std::cout << "key, ";
+      }
+      if (packet.flags & AV_PKT_FLAG_CORRUPT) {
+        std::cout << "corrupt, ";
+      }
+      if (packet.flags & AV_PKT_FLAG_DISCARD) {
+        std::cout << "discard, ";
+      }
+      std::cout << "hex data=[" << std::hex;
+      for (int i = 0; i < 40; ++i) {
+        std::cout << static_cast<int>(packet.data[i]) << ", ";
+      }
+      std::cout << "...]" << std::dec << std::endl;
     }
 
     // Send packet to decoder
@@ -152,6 +172,7 @@ int main(int argc, char **argv)
       continue;
     }
 
+    ++num_frames;
     // std::cout << "Decoded frame " << num_frames++ << " (" << frame->coded_picture_number << ")" << std::endl;
 
     // Write decoded frame into image
@@ -169,4 +190,5 @@ int main(int argc, char **argv)
   fclose(output_file);
   exit(0);
 }
+#pragma clang diagnostic pop
 
